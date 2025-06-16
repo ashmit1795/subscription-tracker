@@ -1,0 +1,323 @@
+// * import { serve } from "@upstash/workflow/express"; This might not work, because upstash is written in CommonJS, not ESM.
+import { createRequire } from "module";
+import Subscription from "../models/subscription.model.js";
+import dayjs from "dayjs";
+const require = createRequire(import.meta.url);
+import debug from "debug";
+import sendReminderEmail from "../utils/sendEmail.js";
+import { Client } from "@upstash/workflow";
+import { QSTASH_TOKEN, SERVER_URL } from "../config/env.js";
+import ApiError from "../utils/ApiError.js";
+import ApiResponse from "../utils/ApiResponse.js";
+import workflowClient from "../config/upstash.js";
+
+const workflowDebug = debug("subtracker:controller:workflow");
+
+const { serve } = require("@upstash/workflow/express");
+const qstash = new Client({ token: QSTASH_TOKEN });
+
+const REMINDERS = [7, 5, 2, 1, 0]; // Days before renewal to send reminders
+
+const sendReminders = serve(async (context) => {
+    const { subscriptionId } = context.requestPayload;
+    const subscription = await fetchSubscription(context, subscriptionId);
+
+    // If no subscription found or not active, stop the workflow
+    if (!subscription || subscription.status !== "active") return;
+
+    const renewalDate = dayjs(subscription.renewalDate);
+
+    // Check if the renewal date is in the past
+    if (renewalDate.isBefore(dayjs())) {
+        workflowDebug(`Renewal date has passed for subscription ${subscriptionId}. Stopping workflow.`);
+        // subscription.status = "expired";
+        // await subscription.save();
+        return;
+    }
+
+	for (const daysBefore of REMINDERS) {
+		
+        const reminderDate = renewalDate.subtract(daysBefore, "day");
+
+		// If the reminder date is today, trigger the reminder immediately
+        if (dayjs().isSame(reminderDate, "day")) {
+            await triggerReminder(context, `${daysBefore} days before reminder`, subscription);
+		}
+		
+
+		// If the reminder date is in the future, sleep until that date
+        if (reminderDate.isAfter(dayjs())) {
+            await sleepUntilReminder(context, `${daysBefore} days before reminder`, reminderDate);
+        }
+
+    }
+});
+
+const getWorkflowStatus = async (req, res, next) => {
+	try {
+		const workflowRunId = req.params.workflowRunId;
+		if (!workflowRunId) {
+			workflowDebug("Workflow Run ID is required");
+			return res.status(400).json(new ApiError(400, "Workflow Run ID is required"));
+		}
+
+		const { runs } = await qstash.logs({
+			workflowRunId: workflowRunId,
+			count: 1,
+		});
+		if (!runs || runs.length === 0) {
+			workflowDebug(`No runs found for Workflow Run ID: ${workflowRunId}`);
+			return res.status(404).json(
+				new ApiResponse({
+					workflowRunId: workflowRunId,
+					status: "not_found",
+				}, "Workflow run not found", 404)
+			);
+		}
+
+		workflowDebug(`Workflow Run ID: ${workflowRunId}, Status: ${runs[0].workflowState}`);
+		// Return the workflow run ID and its status
+		return res.json({
+			workflowRunId: workflowRunId,
+			status: runs[0].workflowState, // e.g., RUN_STARTED, RUN_SUCCESS, RUN_CANCELLED
+		});
+	} catch (err) {
+		next(err);
+	}
+}
+
+const cancelWorkflow = async (req, res, next) => {
+	try {
+		const workflowRunId = req.params.workflowRunId;
+		if (!workflowRunId) {
+			throw new ApiError(400, "Workflow Run ID is required");
+		}
+
+		const response = await qstash.cancel({ ids: workflowRunId });	
+
+		return res.status(200).json(
+			new ApiResponse(response, "Workflow cancelled successfully", 200)
+		);
+	} catch (err) {
+		next(err);
+	}
+};
+
+const cancelAllWorkflows = async (req, res, next) => {
+	try {
+		const result = await qstash.cancel({ all: true });
+		res.json(new ApiResponse(result, "All workflows cancelled successfully", 200));
+	} catch (err) {
+		next(err);
+	}
+}
+
+const listRunningWorkflows = async (req, res, next) => {
+	try {
+		const allRuns = [];
+		let cursor = undefined;
+
+		do {
+			const { runs, cursor: nextCursor } = await qstash.logs({
+				state: "RUN_STARTED",
+				count: 100,
+				cursor,
+			});
+			allRuns.push(...runs);
+			cursor = nextCursor;
+		} while (cursor);
+
+		const simplified = allRuns.map((run) => ({
+			workflowRunId: run.workflowRunId,
+			workflowUrl: run.workflowUrl,
+			createdAt: new Date(run.workflowRunCreatedAt).toISOString(),
+		}));
+
+		return res.json(
+			new ApiResponse({details: simplified, count: simplified.length}, "Running workflows fetched", 200)
+		);
+	} catch (err) {
+		next(err);
+	}
+};
+
+const fetchSubscription = async (context, subscriptionId) => {
+    return await context.run("Get Subscription", async () => {
+        return await Subscription.findById(subscriptionId).populate("user", "name email");
+    })
+}
+
+const sleepUntilReminder = async (context, label, date) => {
+    workflowDebug(`Sleeping until ${label}. Next reminder at ${date}`);
+    await context.sleepUntil(label, date.toDate());
+}
+
+const triggerReminder = async (context, label, subscription) => {
+	// If the renewal date is 0 days before the renewal, we need to update the subscription status and renewal date
+	if (label === "0 days before reminder") {
+		workflowDebug(`Subscription renewal date is today. Updating the subscription immediately.`);
+		return await context.run(label, async () => {
+			const subscriptionId = subscription._id;
+			// Update subscription status to "active" if it is today and update the renewal date based on frequency
+			workflowDebug(`Renewal date is today for subscription ${subscriptionId}. Updating status to active.`);
+
+			const subscriptionForRenewal = await Subscription.findById(subscriptionId).populate("user", "name email");
+
+			subscriptionForRenewal.status = "active";
+
+			if (subscriptionForRenewal.frequency === "monthly") {
+				subscriptionForRenewal.renewalDate =
+					subscriptionForRenewal.renewalDate.add(1, "month");
+			} else if (subscriptionForRenewal.frequency === "yearly") {
+				subscriptionForRenewal.renewalDate =
+					subscriptionForRenewal.renewalDate.add(1, "year");
+			} else if (subscriptionForRenewal.frequency === "weekly") {
+				subscriptionForRenewal.renewalDate =
+					subscriptionForRenewal.renewalDate.add(1, "week");
+			} else if (subscriptionForRenewal.frequency === "daily") {
+				subscriptionForRenewal.renewalDate =
+					subscriptionForRenewal.renewalDate.add(1, "day");
+			} else {
+				workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+				throw new ApiError(400,`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+			}
+
+			const { workflowRunId } = await workflowClient.trigger({
+				url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
+				body: {
+					subscriptionId: subscriptionForRenewal._id,
+				},
+				headers: {
+					"content-type": "application/json",
+				},
+				retries: 0,
+			});
+
+			workflowDebug(
+				`Renewal Workflow triggered for subscription ${subscriptionId} with run ID: ${workflowRunId}`
+			);
+			subscriptionForRenewal.workflowId = workflowRunId; // Store the workflow run ID in the subscription
+			await subscriptionForRenewal.save({ validateBeforeSave: false });
+		});
+	}
+	return await context.run(label, async () => {
+		workflowDebug(`Triggering ${label}`);
+		// Send Email
+		await sendReminderEmail({
+			to: subscription.user.email,
+			type: label,
+			subscription: subscription,
+		});
+	});
+}
+
+export {
+	sendReminders,
+	getWorkflowStatus,
+	cancelWorkflow,
+	cancelAllWorkflows,
+	listRunningWorkflows,
+};
+
+// import { createRequire } from "module";
+// import Subscription from "../models/subscription.model.js";
+// import dayjs from "dayjs";
+// const require = createRequire(import.meta.url);
+// import debug from "debug";
+// import sendReminderEmail from "../utils/sendEmail.js";
+
+// const workflowDebug = debug("subtracker:controller:workflow");
+// const { serve } = require("@upstash/workflow/express");
+
+// const REMINDERS = [7, 5, 2, 1]; // Days before renewal to send reminders
+
+// export const sendReminders = serve(async (context) => {
+// 	const { subscriptionId } = context.requestPayload;
+// 	const subscription = await fetchSubscription(context, subscriptionId);
+
+// 	if (!subscription || subscription.status !== "active") return;
+
+//     const renewalDate = dayjs(subscription.renewalDate);
+//     console.log("Renewal Date:", renewalDate.format("YYYY-MM-DD"));
+
+// 	// If renewal date has passed → stop
+// 	if (renewalDate.isBefore(dayjs())) {
+// 		workflowDebug(`Renewal date has passed for subscription ${subscriptionId}. Stopping workflow.`);
+// 		return;
+// 	}
+
+// 	// Renewal is today → update renewalDate by frequency
+// 	if (renewalDate.isSame(dayjs(), "day")) {
+// 		workflowDebug(`Renewal date is today for subscription ${subscriptionId}. Updating status to active.`);
+
+// 		subscription.status = "active";
+// 		if (subscription.frequency === "monthly") {
+// 			subscription.renewalDate = renewalDate.add(1, "month");
+// 		} else if (subscription.frequency === "yearly") {
+// 			subscription.renewalDate = renewalDate.add(1, "year");
+// 		} else {
+// 			workflowDebug(`Unsupported frequency: ${subscription.frequency}`);
+// 			return;
+// 		}
+// 		await subscription.save();
+// 	}
+
+// 	for (const daysBefore of REMINDERS) {
+// 		const reminderDate = renewalDate.subtract(daysBefore, "day");
+// 		const now = dayjs();
+
+// 		const isSameDate =
+// 			now.format("YYYY-MM-DD") === reminderDate.format("YYYY-MM-DD");
+// 		const isFutureTime = reminderDate.isAfter(now);
+
+// 		if (isSameDate && !isFutureTime) {
+// 			// ✅ Reminder is today, AND the reminder time has already passed → Trigger immediately
+// 			workflowDebug(
+// 				`✅ Triggering ${daysBefore} days before reminder immediately`
+// 			);
+// 			await triggerReminder(
+// 				context,
+// 				`${daysBefore} days before reminder`,
+// 				subscription
+// 			);
+// 		} else if (isFutureTime) {
+// 			// 💤 Future → schedule for later today or coming days
+// 			workflowDebug(
+// 				`💤 Sleeping until ${daysBefore} days before reminder at ${reminderDate}`
+// 			);
+// 			await sleepUntilReminder(
+// 				context,
+// 				`${daysBefore} days before reminder`,
+// 				reminderDate
+// 			);
+// 		}
+
+// 		// ❗ If the reminderDate is in the past (date or time), ignore it
+// 	}
+	
+// });
+
+// const fetchSubscription = async (context, subscriptionId) => {
+// 	return await context.run("Get Subscription", async () => {
+// 		return await Subscription.findById(subscriptionId).populate(
+// 			"user",
+// 			"name email"
+// 		);
+// 	});
+// };
+
+// const sleepUntilReminder = async (context, label, date) => {
+// 	workflowDebug(`Sleeping until ${label}, reminder at ${date}`);
+// 	await context.sleepUntil(label, date.toDate());
+// };
+
+// const triggerReminder = async (context, label, subscription) => {
+// 	return await context.run(label, async () => {
+// 		workflowDebug(`Triggering ${label} reminder`);
+// 		await sendReminderEmail({
+// 			to: subscription.user.email,
+// 			type: label,
+// 			subscription: subscription,
+// 		});
+// 	});
+// };
