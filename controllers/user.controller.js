@@ -43,4 +43,27 @@ const getUserById = async (req, res, next) => {
     }
 }
 
-export {getUsers, getUserById};
+const updateUser = async (req, res, next) => {
+    try {
+        const userId = req.user._id; // Assuming the user ID is in req.user
+        const { name } = req.body;
+
+        // Validate updateData
+        if (!name) {
+            throw new ApiError(400, "No data provided for update");
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(userId, { name }, { new: true }).select("-password -__v");
+        if (!updatedUser) {
+            throw new ApiError(404, "User not found");
+        }
+
+        // If user is updated successfully, return it with a success message
+        return res.status(200).json(new ApiResponse(updatedUser, "User updated successfully", 200));
+    } catch (error) {
+        userDebug("Error updating user: %O", error);
+        next(error); // Pass the error to the error middleware
+    }
+}
+
+export {getUsers, getUserById, updateUser};
