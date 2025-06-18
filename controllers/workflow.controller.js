@@ -19,114 +19,97 @@ const qstash = new Client({ token: QSTASH_TOKEN });
 const REMINDERS = [7, 5, 2, 1, 0]; // Days before renewal to send reminders
 
 const sendReminders = serve(async (context) => {
-	try {
-		const { subscriptionId } = context.requestPayload;
-		workflowDebug(`Starting workflow for subscription: ${subscriptionId}`);
+	const { subscriptionId } = context.requestPayload;
+	workflowDebug(`Starting workflow for subscription: ${subscriptionId}`);
 
-		// Fetch subscription at the beginning of workflow
-		const subscription = await fetchSubscription(context, subscriptionId);
+	// Fetch subscription at the beginning of workflow
+	const subscription = await fetchSubscription(context, subscriptionId);
 
-		// If no subscription found or not active, stop the workflow
-		if (!subscription || subscription.status !== "active") {
-			workflowDebug(
-				`Subscription ${subscriptionId} not found or not active. Stopping workflow.`
-			);
-			return;
-		}
-
-		const renewalDate = dayjs(subscription.renewalDate);
-		const now = dayjs();
-
+	// If no subscription found or not active, stop the workflow
+	if (!subscription || subscription.status !== "active") {
 		workflowDebug(
-			`Renewal date: ${renewalDate.format(
-				"YYYY-MM-DD"
-			)}, Current date: ${now.format("YYYY-MM-DD")}`
+			`Subscription ${subscriptionId} not found or not active. Stopping workflow.`
 		);
-
-		// Check if the renewal date is in the past
-		if (renewalDate.isBefore(now, "day")) {
-			workflowDebug(
-				`Renewal date has passed for subscription ${subscriptionId}. Stopping workflow.`
-			);
-			return;
-		}
-
-		// Process each reminder
-		for (let i = 0; i < REMINDERS.length; i++) {
-			const daysBefore = REMINDERS[i];
-			const reminderDate = renewalDate.subtract(daysBefore, "day");
-
-			workflowDebug(
-				`\n=== Processing reminder ${i + 1}/${
-					REMINDERS.length
-				}: ${daysBefore} days before ===`
-			);
-			workflowDebug(
-				`Reminder date: ${reminderDate.format("YYYY-MM-DD")}`
-			);
-
-			try {
-				// If reminder date is in the future, sleep until that date
-				if (reminderDate.isAfter(dayjs(), "day")) {
-					workflowDebug(
-						`Sleeping until ${reminderDate.format("YYYY-MM-DD")}`
-					);
-					await context.sleepUntil(
-						`Sleep until ${daysBefore} days before`,
-						reminderDate.startOf("day").toDate()
-					);
-					workflowDebug(
-						`Woke up for ${daysBefore} days before reminder`
-					);
-				}
-
-				// Re-fetch subscription after potential sleep
-				const currentSubscription = await fetchSubscription(
-					context,
-					subscriptionId
-				);
-
-				if (
-					!currentSubscription ||
-					currentSubscription.status !== "active"
-				) {
-					workflowDebug(
-						`Subscription no longer active. Stopping workflow.`
-					);
-					return;
-				}
-
-				// Send reminder or process renewal
-				if (daysBefore === 0) {
-					workflowDebug(`Processing renewal (day 0)`);
-					await processRenewal(context, currentSubscription);
-				} else {
-					workflowDebug(`Sending ${daysBefore} days before reminder`);
-					await sendReminder(
-						context,
-						currentSubscription,
-						daysBefore
-					);
-				}
-
-				workflowDebug(
-					`✅ Completed ${daysBefore} days before reminder`
-				);
-			} catch (error) {
-				workflowDebug(
-					`❌ Error in ${daysBefore} days before reminder: ${error.message}`
-				);
-				throw error;
-			}
-		}
-
-		workflowDebug(
-			`🎉 Workflow completed successfully for subscription ${subscriptionId}`
-		);
-	} catch (error) {
-		workflowDebug(`💥 Workflow failed: ${error.message}`);
-		throw error;
+		return;
 	}
+
+	const renewalDate = dayjs(subscription.renewalDate);
+	const now = dayjs();
+
+	workflowDebug(
+		`Renewal date: ${renewalDate.format(
+			"YYYY-MM-DD"
+		)}, Current date: ${now.format("YYYY-MM-DD")}`
+	);
+
+	// Check if the renewal date is in the past
+	if (renewalDate.isBefore(now, "day")) {
+		workflowDebug(
+			`Renewal date has passed for subscription ${subscriptionId}. Stopping workflow.`
+		);
+		return;
+	}
+
+	// Process each reminder - NO TRY/CATCH around context methods
+	for (let i = 0; i < REMINDERS.length; i++) {
+		const daysBefore = REMINDERS[i];
+		const reminderDate = renewalDate.subtract(daysBefore, "day");
+
+		workflowDebug(
+			`\n=== Processing reminder ${i + 1}/${
+				REMINDERS.length
+			}: ${daysBefore} days before ===`
+		);
+		workflowDebug(`Reminder date: ${reminderDate.format("YYYY-MM-DD")}`);
+
+		// Skip if reminder date is in the past
+		if (reminderDate.isBefore(dayjs(), "day")) {
+			workflowDebug(
+				`⏭️ Skipping ${daysBefore} days before reminder - date is in the past (${reminderDate.format(
+					"YYYY-MM-DD"
+				)})`
+			);
+			continue;
+		}
+
+		// If reminder date is in the future, sleep until that date
+		if (reminderDate.isAfter(dayjs(), "day")) {
+			workflowDebug(
+				`Sleeping until ${reminderDate.format("YYYY-MM-DD")}`
+			);
+			await context.sleepUntil(
+				`Sleep until ${daysBefore} days before`,
+				reminderDate.startOf("day").toDate()
+			);
+			workflowDebug(`Woke up for ${daysBefore} days before reminder`);
+		}
+
+		// Re-fetch subscription after potential sleep
+		const currentSubscription = await fetchSubscription(
+			context,
+			subscriptionId
+		);
+
+		if (!currentSubscription || currentSubscription.status !== "active") {
+			workflowDebug(`Subscription no longer active. Stopping workflow.`);
+			return;
+		}
+
+		// Send reminder or process renewal
+		if (daysBefore === 0) {
+			workflowDebug(`Processing renewal (day 0)`);
+			await processRenewal(context, currentSubscription);
+		} else {
+			workflowDebug(`Sending ${daysBefore} days before reminder`);
+			await sendReminder(context, currentSubscription, daysBefore);
+		}
+
+		workflowDebug(`✅ Completed ${daysBefore} days before reminder`);
+	}
+
+	workflowDebug(
+		`🎉 Workflow completed successfully for subscription ${subscriptionId}`
+	);
 });
 
 const getWorkflowStatus = async (req, res, next) => {
@@ -265,13 +248,17 @@ const sendReminder = async (context, subscription, daysBefore) => {
 			`📧 Sending ${daysBefore} days before reminder to ${subscription.user.email}`
 		);
 
-		await sendReminderEmail({
-			to: subscription.user.email,
-			type: `${daysBefore} days before reminder`,
-			subscription: subscription,
-		});
-
-		workflowDebug(`✅ Reminder email sent successfully`);
+		try {
+			await sendReminderEmail({
+				to: subscription.user.email,
+				type: `${daysBefore} days before reminder`,
+				subscription: subscription,
+			});
+			workflowDebug(`✅ Reminder email sent successfully`);
+		} catch (error) {
+			workflowDebug(`❌ Failed to send email: ${error.message}`);
+			throw error; // This will cause the workflow step to fail and retry
+		}
 	});
 };
 
@@ -281,11 +268,14 @@ const processRenewal = async (context, subscription) => {
 			`🔄 Processing renewal for subscription ${subscription._id}`
 		);
 
-		const currentRenewalDate = dayjs(subscription.renewalDate);
+		const subscriptionForRenewal = await Subscription.findById(
+			subscription._id
+		).populate("user", "name email");
+		const currentRenewalDate = dayjs(subscriptionForRenewal.renewalDate);
 		let newRenewalDate;
 
 		// Calculate new renewal date
-		switch (subscription.frequency) {
+		switch (subscriptionForRenewal.frequency) {
 			case "monthly":
 				newRenewalDate = currentRenewalDate.add(1, "month");
 				break;
@@ -301,20 +291,20 @@ const processRenewal = async (context, subscription) => {
 			default:
 				throw new ApiError(
 					400,
-					`Unsupported frequency: ${subscription.frequency}`
+					`Unsupported frequency: ${subscriptionForRenewal.frequency}`
 				);
 		}
 
 		// Update subscription
-		subscription.renewalDate = newRenewalDate.toDate();
-		subscription.status = "active";
+		subscriptionForRenewal.renewalDate = newRenewalDate.toDate();
+		subscriptionForRenewal.status = "active";
 
 		// Trigger new workflow for next cycle
 		let newWorkflowId = null;
 		try {
 			const { workflowRunId } = await workflowClient.trigger({
 				url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
-				body: { subscriptionId: subscription._id },
+				body: { subscriptionId: subscriptionForRenewal._id },
 				headers: { "content-type": "application/json" },
 				retries: 0,
 			});
@@ -324,19 +314,24 @@ const processRenewal = async (context, subscription) => {
 			workflowDebug(
 				`⚠️ Failed to trigger new workflow: ${error.message}`
 			);
+			// Don't throw here - we still want to save the subscription
 		}
 
 		if (newWorkflowId) {
-			subscription.workflowId = newWorkflowId;
+			subscriptionForRenewal.workflowId = newWorkflowId;
 		}
 
-		await subscription.save({ validateBeforeSave: false });
-
-		workflowDebug(
-			`✅ Subscription renewed. New renewal date: ${newRenewalDate.format(
-				"YYYY-MM-DD"
-			)}`
-		);
+		try {
+			await subscriptionForRenewal.save({ validateBeforeSave: false });
+			workflowDebug(
+				`✅ Subscription renewed. New renewal date: ${newRenewalDate.format(
+					"YYYY-MM-DD"
+				)}`
+			);
+		} catch (error) {
+			workflowDebug(`❌ Failed to save subscription: ${error.message}`);
+			throw error;
+		}
 	});
 };
 
