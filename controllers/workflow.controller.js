@@ -62,49 +62,52 @@ const sendReminders = serve(async (context) => {
 		);
 		workflowDebug(`Reminder date: ${reminderDate.format("YYYY-MM-DD")}`);
 
-		// Skip if reminder date is in the past
-		if (reminderDate.isBefore(dayjs(), "day")) {
-			workflowDebug(
-				`⏭️ Skipping ${daysBefore} days before reminder - date is in the past (${reminderDate.format(
-					"YYYY-MM-DD"
-				)})`
+		// Always run a step for each reminder to maintain consistent step sequence
+		await context.run(`Process ${daysBefore} days reminder`, async () => {
+			// Skip if reminder date is in the past
+			if (reminderDate.isBefore(dayjs(), "day")) {
+				workflowDebug(
+					`⏭️ Skipping ${daysBefore} days before reminder - date is in the past (${reminderDate.format(
+						"YYYY-MM-DD"
+					)})`
+				);
+				return; // Skip this reminder but maintain the step
+			}
+
+			// If reminder date is in the future, sleep until that date
+			if (reminderDate.isAfter(dayjs(), "day")) {
+				workflowDebug(
+					`Sleeping until ${reminderDate.format("YYYY-MM-DD")}`
+				);
+				await context.sleepUntil(
+					`Sleep until ${daysBefore} days before`,
+					reminderDate.startOf("day").toDate()
+				);
+				workflowDebug(`Woke up for ${daysBefore} days before reminder`);
+			}
+
+			// Re-fetch subscription after potential sleep
+			const currentSubscription = await fetchSubscription(
+				context,
+				subscriptionId
 			);
-			continue;
-		}
 
-		// If reminder date is in the future, sleep until that date
-		if (reminderDate.isAfter(dayjs(), "day")) {
-			workflowDebug(
-				`Sleeping until ${reminderDate.format("YYYY-MM-DD")}`
-			);
-			await context.sleepUntil(
-				`Sleep until ${daysBefore} days before`,
-				reminderDate.startOf("day").toDate()
-			);
-			workflowDebug(`Woke up for ${daysBefore} days before reminder`);
-		}
+			if (!currentSubscription || currentSubscription.status !== "active") {
+				workflowDebug(`Subscription no longer active. Stopping workflow.`);
+				throw new ApiError(400, "Subscription no longer active");
+			}
 
-		// Re-fetch subscription after potential sleep
-		const currentSubscription = await fetchSubscription(
-			context,
-			subscriptionId
-		);
+			// Send reminder or process renewal
+			if (daysBefore === 0) {
+				workflowDebug(`Processing renewal (day 0)`);
+				await processRenewal(context, currentSubscription);
+			} else {
+				workflowDebug(`Sending ${daysBefore} days before reminder`);
+				await sendReminder(context, currentSubscription, daysBefore);
+			}
 
-		if (!currentSubscription || currentSubscription.status !== "active") {
-			workflowDebug(`Subscription no longer active. Stopping workflow.`);
-			return;
-		}
-
-		// Send reminder or process renewal
-		if (daysBefore === 0) {
-			workflowDebug(`Processing renewal (day 0)`);
-			await processRenewal(context, currentSubscription);
-		} else {
-			workflowDebug(`Sending ${daysBefore} days before reminder`);
-			await sendReminder(context, currentSubscription, daysBefore);
-		}
-
-		workflowDebug(`✅ Completed ${daysBefore} days before reminder`);
+			workflowDebug(`✅ Completed ${daysBefore} days before reminder`);
+		});
 	}
 
 	workflowDebug(
