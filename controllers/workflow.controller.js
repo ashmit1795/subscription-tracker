@@ -38,7 +38,8 @@ const sendReminders = serve(async (context) => {
 
 		// If the reminder date is in the future, sleep until that date
 		if (reminderDate.isAfter(dayjs())) {
-			await sleepUntilReminder(context, `${daysBefore} days before reminder`, reminderDate);
+			await context.sleepUntil(`${daysBefore} days before reminder`, reminderDate.toDate());
+			// await sleepUntilReminder(context, `${daysBefore} days before reminder`, reminderDate);
 		}
 
 		// If the reminder date is today, trigger the reminder immediately
@@ -142,10 +143,10 @@ const fetchSubscription = async (context, subscriptionId) => {
 	});
 };
 
-const sleepUntilReminder = async (context, label, date) => {
-	workflowDebug(`Sleeping until ${label}. Next reminder at ${date}`);
-	return await context.sleepUntil(label, date.toDate());
-};
+// const sleepUntilReminder = async (context, label, date) => {
+// 	workflowDebug(`Sleeping until ${label}. Next reminder at ${date}`);
+// 	return await context.sleepUntil(label, date.toDate());
+// };
 
 const triggerReminder = async (context, label, subscription) => {
 	// If the renewal date is 0 days before the renewal, we need to update the subscription status and renewal date
