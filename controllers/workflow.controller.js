@@ -174,6 +174,8 @@ const triggerReminder = async (context, label, subscription) => {
 				throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
 			}
 
+			await subscriptionForRenewal.save({ validateBeforeSave: false }); // Save without validation to avoid issues with required fields
+			workflowDebug(`Subscription ${subscriptionId} updated successfully. New renewal date: ${subscriptionForRenewal.renewalDate}`);
 			const { workflowRunId } = await workflowClient.trigger({
 				url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
 				body: {
