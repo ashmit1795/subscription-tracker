@@ -19,7 +19,9 @@ const aj = arcjet({
 				"CATEGORY:MONITOR", // Uptime monitoring services
 				"CATEGORY:PREVIEW", // Link previews e.g. Slack, Discord
                 "PostmanRuntime/7.44.0", // Postman user-agent header
-                "POSTMAN", // Postman
+				"POSTMAN", // Postman
+				"Upstash-Qstash", // Upstash Qstash
+
 			],
 		}),
 		// Create a token bucket rate limit. Other algorithms are supported.
