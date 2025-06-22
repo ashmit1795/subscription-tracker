@@ -44,7 +44,67 @@ const sendReminders = serve(async (context) => {
 
 		// If the reminder date is today, trigger the reminder immediately
 		if (dayjs().isSame(reminderDate, "day")) {
-			await triggerReminder(context, `${daysBefore} days before reminder`, subscription);
+			workflowDebug(`Triggering reminder for subscription ${subscriptionId} - ${daysBefore} days before renewal.`);
+			// await triggerReminder(context, `${daysBefore} days before reminder`, subscription);
+
+			// If the renewal date is 0 days before the renewal, we need to update the subscription status and renewal date
+			if (daysBefore === 0) {
+				workflowDebug(`Subscription renewal date is today. Updating the subscription immediately.`);
+				await context.run(`${daysBefore} days before reminder`, async () => {
+					const subscriptionId = subscription._id;
+					// Update subscription status to "active" if it is today and update the renewal date based on frequency
+					workflowDebug(`Renewal date is today for subscription ${subscriptionId}. Updating status to active.`);
+
+					const subscriptionForRenewal = await Subscription.findById(subscriptionId).populate("user", "name email");
+
+					subscriptionForRenewal.status = "active";
+
+					if (subscriptionForRenewal.frequency === "monthly") {
+						subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
+					} else if (subscriptionForRenewal.frequency === "yearly") {
+						subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "year").toDate();
+					} else if (subscriptionForRenewal.frequency === "weekly") {
+						subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "week").toDate();
+					} else if (subscriptionForRenewal.frequency === "daily") {
+						subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "day").toDate();
+					} else {
+						workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+						throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+					}
+
+					await subscriptionForRenewal.save({ validateBeforeSave: false }); // Save without validation to avoid issues with required fields
+					workflowDebug(`Subscription ${subscriptionId} updated successfully. New renewal date: ${subscriptionForRenewal.renewalDate}`);
+
+					const subscriptionAfterUpdate = await Subscription.findById(subscriptionId).populate("user", "name email");
+
+					// Trigger a new workflow after renewal
+					const { workflowRunId } = await workflowClient.trigger({
+						url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
+						body: {
+							subscriptionId: subscriptionForRenewal._id,
+						},
+						headers: {
+							"content-type": "application/json",
+						},
+						retries: 3,
+					});
+
+					workflowDebug(`Renewal Workflow triggered for subscription ${subscriptionId} with run ID: ${workflowRunId}`);
+					subscriptionAfterUpdate.workflowId = workflowRunId; // Store the workflow run ID in the subscription
+					await subscriptionAfterUpdate.save({ validateBeforeSave: false });
+				});
+			}
+
+	   		// Send Reminder Email
+			await context.run(`${daysBefore} days before reminder`, async () => {
+				workflowDebug(`Triggering ${daysBefore} days before reminder`);
+				// Send Email
+				await sendReminderEmail({
+					to: subscription.user.email,
+					type: `${daysBefore} days before reminder`,
+					subscription: subscription,
+				});
+			});
 		}
 	}
 });
@@ -148,59 +208,59 @@ const fetchSubscription = async (context, subscriptionId) => {
 // 	return await context.sleepUntil(label, date.toDate());
 // };
 
-const triggerReminder = async (context, label, subscription) => {
-	// If the renewal date is 0 days before the renewal, we need to update the subscription status and renewal date
-	if (label === "0 days before reminder") {
-		workflowDebug(`Subscription renewal date is today. Updating the subscription immediately.`);
-		return await context.run(label, async () => {
-			const subscriptionId = subscription._id;
-			// Update subscription status to "active" if it is today and update the renewal date based on frequency
-			workflowDebug(`Renewal date is today for subscription ${subscriptionId}. Updating status to active.`);
+// const triggerReminder = async (context, label, subscription) => {
+// 	// If the renewal date is 0 days before the renewal, we need to update the subscription status and renewal date
+// 	if (label === "0 days before reminder") {
+// 		workflowDebug(`Subscription renewal date is today. Updating the subscription immediately.`);
+// 		return await context.run(label, async () => {
+// 			const subscriptionId = subscription._id;
+// 			// Update subscription status to "active" if it is today and update the renewal date based on frequency
+// 			workflowDebug(`Renewal date is today for subscription ${subscriptionId}. Updating status to active.`);
 
-			const subscriptionForRenewal = await Subscription.findById(subscriptionId).populate("user", "name email");
+// 			const subscriptionForRenewal = await Subscription.findById(subscriptionId).populate("user", "name email");
 
-			subscriptionForRenewal.status = "active";
+// 			subscriptionForRenewal.status = "active";
 
-			if (subscriptionForRenewal.frequency === "monthly") {
-				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
-			} else if (subscriptionForRenewal.frequency === "yearly") {
-				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "year").toDate();
-			} else if (subscriptionForRenewal.frequency === "weekly") {
-				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "week").toDate();
-			} else if (subscriptionForRenewal.frequency === "daily") {
-				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "day").toDate();
-			} else {
-				workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
-				throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
-			}
+// 			if (subscriptionForRenewal.frequency === "monthly") {
+// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
+// 			} else if (subscriptionForRenewal.frequency === "yearly") {
+// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "year").toDate();
+// 			} else if (subscriptionForRenewal.frequency === "weekly") {
+// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "week").toDate();
+// 			} else if (subscriptionForRenewal.frequency === "daily") {
+// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "day").toDate();
+// 			} else {
+// 				workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+// 				throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+// 			}
 
-			await subscriptionForRenewal.save({ validateBeforeSave: false }); // Save without validation to avoid issues with required fields
-			workflowDebug(`Subscription ${subscriptionId} updated successfully. New renewal date: ${subscriptionForRenewal.renewalDate}`);
-			const { workflowRunId } = await workflowClient.trigger({
-				url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
-				body: {
-					subscriptionId: subscriptionForRenewal._id,
-				},
-				headers: {
-					"content-type": "application/json",
-				},
-				retries: 0,
-			});
+// 			await subscriptionForRenewal.save({ validateBeforeSave: false }); // Save without validation to avoid issues with required fields
+// 			workflowDebug(`Subscription ${subscriptionId} updated successfully. New renewal date: ${subscriptionForRenewal.renewalDate}`);
+// 			const { workflowRunId } = await workflowClient.trigger({
+// 				url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
+// 				body: {
+// 					subscriptionId: subscriptionForRenewal._id,
+// 				},
+// 				headers: {
+// 					"content-type": "application/json",
+// 				},
+// 				retries: 0,
+// 			});
 
-			workflowDebug(`Renewal Workflow triggered for subscription ${subscriptionId} with run ID: ${workflowRunId}`);
-			subscriptionForRenewal.workflowId = workflowRunId; // Store the workflow run ID in the subscription
-			await subscriptionForRenewal.save({ validateBeforeSave: false });
-		});
-	}
-	return await context.run(label, async () => {
-		workflowDebug(`Triggering ${label}`);
-		// Send Email
-		await sendReminderEmail({
-			to: subscription.user.email,
-			type: label,
-			subscription: subscription,
-		});
-	});
-};
+// 			workflowDebug(`Renewal Workflow triggered for subscription ${subscriptionId} with run ID: ${workflowRunId}`);
+// 			subscriptionForRenewal.workflowId = workflowRunId; // Store the workflow run ID in the subscription
+// 			await subscriptionForRenewal.save({ validateBeforeSave: false });
+// 		});
+// 	}
+// 	return await context.run(label, async () => {
+// 		workflowDebug(`Triggering ${label}`);
+// 		// Send Email
+// 		await sendReminderEmail({
+// 			to: subscription.user.email,
+// 			type: label,
+// 			subscription: subscription,
+// 		});
+// 	});
+// };
 
 export { sendReminders, getWorkflowStatus, cancelWorkflow, cancelAllWorkflows, listRunningWorkflows };
