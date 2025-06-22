@@ -93,18 +93,18 @@ const sendReminders = serve(async (context) => {
 					subscriptionAfterUpdate.workflowId = workflowRunId; // Store the workflow run ID in the subscription
 					await subscriptionAfterUpdate.save({ validateBeforeSave: false });
 				});
-			}
-
-	   		// Send Reminder Email
-			await context.run(`${daysBefore} days before reminder`, async () => {
-				workflowDebug(`Triggering ${daysBefore} days before reminder`);
-				// Send Email
-				await sendReminderEmail({
-					to: subscription.user.email,
-					type: `${daysBefore} days before reminder`,
-					subscription: subscription,
+			} else {
+				// Send Reminder Email
+				await context.run(`${daysBefore} days before reminder`, async () => {
+					workflowDebug(`Triggering ${daysBefore} days before reminder`);
+					// Send Email
+					await sendReminderEmail({
+						to: subscription.user.email,
+						type: `${daysBefore} days before reminder`,
+						subscription: subscription,
+					});
 				});
-			});
+			}
 		}
 	}
 });
