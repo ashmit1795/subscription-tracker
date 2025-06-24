@@ -50,9 +50,7 @@ const sendReminders = serve(async (context) => {
 		}
 
 		// Re-fetch subscription after sleep to ensure it's still active
-		const currentSubscription = await context.run(`fetch-subscription-${i}`, async () => {
-			return await fetchSubscription(context, subscriptionId);
-		});
+		const currentSubscription = await fetchSubscription(context, subscriptionId);
 
 		if (!currentSubscription || currentSubscription.status !== "active") {
 			workflowDebug(`Subscription ${subscriptionId} is no longer active. Stopping workflow.`);
