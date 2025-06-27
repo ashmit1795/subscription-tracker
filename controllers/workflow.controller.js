@@ -6,10 +6,9 @@ const require = createRequire(import.meta.url);
 import debug from "debug";
 import sendReminderEmail from "../utils/sendEmail.js";
 import { Client } from "@upstash/workflow";
-import { QSTASH_TOKEN, SERVER_URL } from "../config/env.js";
+import { QSTASH_TOKEN } from "../config/env.js";
 import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
-import workflowClient from "../config/upstash.js";
 
 const workflowDebug = debug("subtracker:controller:workflow");
 
@@ -33,106 +32,20 @@ const sendReminders = serve(async (context) => {
 		return;
 	}
 
-	for (let i = 0; i < REMINDERS.length; i++) {
-		const daysBefore = REMINDERS[i];
+	for (const daysBefore of REMINDERS) {
 		const reminderDate = renewalDate.subtract(daysBefore, "day");
-		const now = dayjs();
 
-		// If reminder date has already passed, execute an empty step to maintain sequence
-		if (reminderDate.isBefore(now, "day")) {
-			workflowDebug(`Skipping reminder for ${daysBefore} days before - date has passed`);
-			await context.run(`reminder-step-${i}`, async () => {
-				workflowDebug(`Empty step execution for ${daysBefore} days reminder (already passed)`);
-			});
-			continue;
+		if (reminderDate.isAfter(dayjs())) {
+			await sleepUntilReminder(context, `Reminder ${daysBefore}`, reminderDate);
 		}
 
-		// Sleep until the reminder date if it's in the future (as a separate step)
-		if (reminderDate.isAfter(now, "day")) {
-			workflowDebug(`Sleeping until ${reminderDate.format()} for ${daysBefore} days reminder`);
-			await context.sleepUntil(`sleep-until-${i}`, reminderDate.toDate());
-		}
+		// After sleep, re-fetch subscription
+		const subscriptionAfterSleep = await fetchSubscription(context, subscriptionId);
+		// If no subscription found or not active, stop the workflow
+		if (!subscriptionAfterSleep || subscriptionAfterSleep.status !== "active") return;
 
-		// Then run the reminder action as a separate step
-		if (daysBefore === 0) {
-			// Handle renewal in a separate step
-			await context.run(`renewal-step-${i}`, async () => {
-				workflowDebug(`Processing renewal for subscription ${subscriptionId}`);
-
-				const subscriptionForRenewal = await Subscription.findById(subscriptionId).populate("user", "name email");
-
-				if (!subscriptionForRenewal) {
-					throw new Error(`Subscription ${subscriptionId} not found during renewal`);
-				}
-
-				subscriptionForRenewal.status = "active";
-				const currentRenewalDate = dayjs(subscriptionForRenewal.renewalDate);
-
-				// Update renewal date based on frequency
-				switch (subscriptionForRenewal.frequency) {
-					case "monthly":
-						subscriptionForRenewal.renewalDate = currentRenewalDate.add(1, "month").toDate();
-						break;
-					case "yearly":
-						subscriptionForRenewal.renewalDate = currentRenewalDate.add(1, "year").toDate();
-						break;
-					case "weekly":
-						subscriptionForRenewal.renewalDate = currentRenewalDate.add(1, "week").toDate();
-						break;
-					case "daily":
-						subscriptionForRenewal.renewalDate = currentRenewalDate.add(1, "day").toDate();
-						break;
-					default:
-						workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
-						throw new Error(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
-				}
-
-				await subscriptionForRenewal.save({ validateBeforeSave: false });
-				workflowDebug(`Subscription ${subscriptionId} renewed. New renewal date: ${subscriptionForRenewal.renewalDate}`);
-			});
-
-			// Trigger new workflow in a separate step
-			await context.run(`trigger-new-workflow-${i}`, async () => {
-				try {
-					const { workflowRunId } = await workflowClient.trigger({
-						url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
-						body: { subscriptionId },
-						headers: { "content-type": "application/json" },
-						retries: 3,
-					});
-
-					// Update subscription with new workflow ID
-					await Subscription.findByIdAndUpdate(subscriptionId, { workflowId: workflowRunId }, { validateBeforeSave: false });
-
-					workflowDebug(`New workflow triggered for subscription ${subscriptionId} with run ID: ${workflowRunId}`);
-					return workflowRunId;
-				} catch (error) {
-					workflowDebug(`Error triggering renewal workflow for subscription ${subscriptionId}: ${error.message}`);
-					throw error;
-				}
-			});
-
-			// End current workflow after renewal
-			return;
-		} else {
-			// Send reminder email as a separate step
-			await context.run(`reminder-step-${i}`, async () => {
-				// Re-fetch subscription to ensure it's still active
-				const currentSubscription = await Subscription.findById(subscriptionId).populate("user", "name email");
-
-				if (!currentSubscription || currentSubscription.status !== "active") {
-					workflowDebug(`Subscription ${subscriptionId} is no longer active. Stopping step.`);
-					return;
-				}
-
-				workflowDebug(`Sending ${daysBefore} days before reminder for subscription ${subscriptionId}`);
-
-				await sendReminderEmail({
-					to: currentSubscription.user.email,
-					type: `${daysBefore} days before reminder`,
-					subscription: currentSubscription,
-				});
-			});
+		if (dayjs().isSame(reminderDate, "day")) {
+			await triggerReminder(context, `${daysBefore} days before reminder`, subscription);
 		}
 	}
 });
@@ -231,64 +144,21 @@ const fetchSubscription = async (context, subscriptionId) => {
 	});
 };
 
-// const sleepUntilReminder = async (context, label, date) => {
-// 	workflowDebug(`Sleeping until ${label}. Next reminder at ${date}`);
-// 	return await context.sleepUntil(label, date.toDate());
-// };
+const sleepUntilReminder = async (context, label, date) => {
+	workflowDebug(`Sleeping until ${label}. Next reminder at ${date}`);
+	return await context.sleepUntil(label, date.toDate());
+};
 
-// const triggerReminder = async (context, label, subscription) => {
-// 	// If the renewal date is 0 days before the renewal, we need to update the subscription status and renewal date
-// 	if (label === "0 days before reminder") {
-// 		workflowDebug(`Subscription renewal date is today. Updating the subscription immediately.`);
-// 		return await context.run(label, async () => {
-// 			const subscriptionId = subscription._id;
-// 			// Update subscription status to "active" if it is today and update the renewal date based on frequency
-// 			workflowDebug(`Renewal date is today for subscription ${subscriptionId}. Updating status to active.`);
-
-// 			const subscriptionForRenewal = await Subscription.findById(subscriptionId).populate("user", "name email");
-
-// 			subscriptionForRenewal.status = "active";
-
-// 			if (subscriptionForRenewal.frequency === "monthly") {
-// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
-// 			} else if (subscriptionForRenewal.frequency === "yearly") {
-// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "year").toDate();
-// 			} else if (subscriptionForRenewal.frequency === "weekly") {
-// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "week").toDate();
-// 			} else if (subscriptionForRenewal.frequency === "daily") {
-// 				subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "day").toDate();
-// 			} else {
-// 				workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
-// 				throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
-// 			}
-
-// 			await subscriptionForRenewal.save({ validateBeforeSave: false }); // Save without validation to avoid issues with required fields
-// 			workflowDebug(`Subscription ${subscriptionId} updated successfully. New renewal date: ${subscriptionForRenewal.renewalDate}`);
-// 			const { workflowRunId } = await workflowClient.trigger({
-// 				url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
-// 				body: {
-// 					subscriptionId: subscriptionForRenewal._id,
-// 				},
-// 				headers: {
-// 					"content-type": "application/json",
-// 				},
-// 				retries: 0,
-// 			});
-
-// 			workflowDebug(`Renewal Workflow triggered for subscription ${subscriptionId} with run ID: ${workflowRunId}`);
-// 			subscriptionForRenewal.workflowId = workflowRunId; // Store the workflow run ID in the subscription
-// 			await subscriptionForRenewal.save({ validateBeforeSave: false });
-// 		});
-// 	}
-// 	return await context.run(label, async () => {
-// 		workflowDebug(`Triggering ${label}`);
-// 		// Send Email
-// 		await sendReminderEmail({
-// 			to: subscription.user.email,
-// 			type: label,
-// 			subscription: subscription,
-// 		});
-// 	});
-// };
+const triggerReminder = async (context, label, subscription) => {
+	return await context.run(label, async () => {
+		workflowDebug(`Triggering ${label}`);
+		// Send Email
+		await sendReminderEmail({
+			to: subscription.user.email,
+			type: label,
+			subscription: subscription,
+		});
+	});
+};
 
 export { sendReminders, getWorkflowStatus, cancelWorkflow, cancelAllWorkflows, listRunningWorkflows };
