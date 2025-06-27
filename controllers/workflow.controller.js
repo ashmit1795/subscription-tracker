@@ -15,7 +15,7 @@ const workflowDebug = debug("subtracker:controller:workflow");
 const { serve } = require("@upstash/workflow/express");
 const qstash = new Client({ token: QSTASH_TOKEN });
 
-const REMINDERS = [7, 5, 2, 1, 0]; // Days before renewal to send reminders
+const REMINDERS = [7, 5, 2, 1]; // Days before renewal to send reminders
 
 const sendReminders = serve(async (context) => {
 	const { subscriptionId } = context.requestPayload;
@@ -37,12 +37,12 @@ const sendReminders = serve(async (context) => {
 
 		if (reminderDate.isAfter(dayjs())) {
 			await sleepUntilReminder(context, `Reminder ${daysBefore}`, reminderDate);
-		}
 
-		// After sleep, re-fetch subscription
-		const subscriptionAfterSleep = await fetchSubscription(context, subscriptionId);
-		// If no subscription found or not active, stop the workflow
-		if (!subscriptionAfterSleep || subscriptionAfterSleep.status !== "active") return;
+			// After sleep, re-fetch subscription
+			const subscriptionAfterSleep = await fetchSubscription(context, subscriptionId);
+			// If no subscription found or not active, stop the workflow
+			if (!subscriptionAfterSleep || subscriptionAfterSleep.status !== "active") return;
+		}
 
 		if (dayjs().isSame(reminderDate, "day")) {
 			await triggerReminder(context, `${daysBefore} days before reminder`, subscription);
