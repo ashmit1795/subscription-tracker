@@ -36,7 +36,7 @@ const sendReminders = serve(async (context) => {
 		const reminderDate = renewalDate.subtract(daysBefore, "day");
 
 		if (reminderDate.isAfter(dayjs())) {
-			await sleepUntilReminder(context, `Reminder ${daysBefore}`, reminderDate);
+			await sleepUntilReminder(context, `${daysBefore} days before reminder`, reminderDate);
 
 			// After sleep, re-fetch subscription
 			const subscriptionAfterSleep = await fetchSubscription(context, subscriptionId);
