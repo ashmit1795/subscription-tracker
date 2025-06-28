@@ -18,10 +18,11 @@ const aj = arcjet({
 				// See the full list at https://arcjet.com/bot-list
 				"CATEGORY:MONITOR", // Uptime monitoring services
 				"CATEGORY:PREVIEW", // Link previews e.g. Slack, Discord
-                "PostmanRuntime/7.44.0", // Postman user-agent header
+				"PostmanRuntime/7.44.0", // Postman user-agent header
 				"POSTMAN", // Postman
 				"Upstash-Qstash", // Upstash Qstash
-
+				"GO_HTTP", // Go HTTP client
+				"Go-http-client/2.0", // Render user-agent header
 			],
 		}),
 		// Create a token bucket rate limit. Other algorithms are supported.
