@@ -24,10 +24,12 @@ const sendReminders = serve(async (context) => {
 	// If no subscription found or not active, stop the workflow
 	if (!subscription || subscription.status !== "active") return;
 
+	// Get current time within a workflow step to ensure determinism
+	const currentTime = await getCurrentTime(context);
 	const renewalDate = dayjs(subscription.renewalDate);
 
 	// Check if the renewal date is in the past
-	if (renewalDate.isBefore(dayjs())) {
+	if (renewalDate.isBefore(dayjs(currentTime))) {
 		workflowDebug(`Renewal date has passed for subscription ${subscriptionId}. Stopping workflow.`);
 		return;
 	}
@@ -35,16 +37,23 @@ const sendReminders = serve(async (context) => {
 	for (const daysBefore of REMINDERS) {
 		const reminderDate = renewalDate.subtract(daysBefore, "day");
 
-		if (reminderDate.isAfter(dayjs())) {
+		// Use the deterministic current time for comparison
+		if (reminderDate.isAfter(dayjs(currentTime))) {
 			await sleepUntilReminder(context, `${daysBefore} days before reminder`, reminderDate);
 
-			// After sleep, re-fetch subscription
+			// After sleep, re-fetch subscription and check if it's still active
 			const subscriptionAfterSleep = await fetchSubscription(context, subscriptionId);
-			// If no subscription found or not active, stop the workflow
 			if (!subscriptionAfterSleep || subscriptionAfterSleep.status !== "active") return;
-		}
 
-		if (dayjs().isSame(reminderDate, "day")) {
+			// Get current time again after sleep
+			const currentTimeAfterSleep = await getCurrentTime(context);
+
+			// Check if today is the reminder day
+			if (dayjs(currentTimeAfterSleep).isSame(reminderDate, "day")) {
+				await triggerReminder(context, `${daysBefore} days before reminder`, subscriptionAfterSleep);
+			}
+		} else if (dayjs(currentTime).isSame(reminderDate, "day")) {
+			// If the reminder date is today, send the reminder immediately
 			await triggerReminder(context, `${daysBefore} days before reminder`, subscription);
 		}
 	}
@@ -141,6 +150,12 @@ const listRunningWorkflows = async (req, res, next) => {
 const fetchSubscription = async (context, subscriptionId) => {
 	return await context.run("Get Subscription", async () => {
 		return await Subscription.findById(subscriptionId).populate("user", "name email");
+	});
+};
+
+const getCurrentTime = async (context) => {
+	return await context.run("Get Current Time", async () => {
+		return new Date();
 	});
 };
 
