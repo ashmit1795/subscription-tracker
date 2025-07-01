@@ -6,16 +6,17 @@ const require = createRequire(import.meta.url);
 import debug from "debug";
 import sendReminderEmail from "../utils/sendEmail.js";
 import { Client } from "@upstash/workflow";
-import { QSTASH_TOKEN } from "../config/env.js";
+import { QSTASH_TOKEN, SERVER_URL } from "../config/env.js";
 import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
+import workflowClient from "../config/upstash.js";
 
 const workflowDebug = debug("subtracker:controller:workflow");
 
 const { serve } = require("@upstash/workflow/express");
 const qstash = new Client({ token: QSTASH_TOKEN });
 
-const REMINDERS = [7, 5, 2, 1]; // Days before renewal to send reminders
+const REMINDERS = [7, 5, 2, 1, 0]; // Days before renewal to send reminders
 
 const sendReminders = serve(async (context) => {
 	const { subscriptionId } = context.requestPayload;
@@ -48,7 +49,12 @@ const sendReminders = serve(async (context) => {
 			// Get current time again after sleep
 			const currentTimeAfterSleep = await getCurrentTime(context);
 
-			// Check if today is the reminder day
+			// Check if the renewal date is same as the reminder date
+			if (renewalDate.isSame(reminderDate, "day")) {
+				await processRenewal(context, `${daysBefore} days before reminder`, subscriptionAfterSleep);
+			}
+
+			// Otherwise, check if the current date is the same as the reminder date, then trigger the reminder
 			if (dayjs(currentTimeAfterSleep).isSame(reminderDate, "day")) {
 				await triggerReminder(context, `${daysBefore} days before reminder`, subscriptionAfterSleep);
 			}
@@ -175,5 +181,44 @@ const triggerReminder = async (context, label, subscription) => {
 		});
 	});
 };
+
+const processRenewal = async (context, label, subscription) => {
+	return await context.run(label, async () => {
+		workflowDebug(`Processing renewal for subscription ${subscription._id}. Updating the subscription immediately.`);
+		const subscriptionForRenewal = await Subscription.findById(subscription._id).populate("user", "name email");
+
+		subscriptionForRenewal.status = "active";
+		subscriptionForRenewal.renewalDate = null
+		if (subscriptionForRenewal.frequency === "monthly") {
+			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
+		} else if (subscriptionForRenewal.frequency === "yearly") {
+			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "year").toDate();
+		} else if (subscriptionForRenewal.frequency === "weekly") {
+			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "week").toDate();
+		} else if (subscriptionForRenewal.frequency === "daily") {
+			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "day").toDate();
+		} else {
+			workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+			throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
+		}
+
+		await subscriptionForRenewal.save({ validateBeforeSave: false });
+
+		const { workflowRunId } = await workflowClient.trigger({
+			url: `${SERVER_URL}/api/v1/workflows/subscription/reminder`,
+			body: {
+				subscriptionId: subscriptionForRenewal._id,
+			},
+			headers: {
+				"content-type": "application/json",
+			},
+			retries: 0,
+		});
+
+		workflowDebug(`Renewal Workflow triggered for subscription ${subscriptionForRenewal._id} with run ID: ${workflowRunId}`);
+		subscriptionForRenewal.workflowId = workflowRunId; // Store the workflow run ID in the subscription
+		await subscriptionForRenewal.save({ validateBeforeSave: false });
+	});
+}
 
 export { sendReminders, getWorkflowStatus, cancelWorkflow, cancelAllWorkflows, listRunningWorkflows };
