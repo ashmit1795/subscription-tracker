@@ -52,6 +52,7 @@ const sendReminders = serve(async (context) => {
 			// Check if the renewal date is same as the reminder date
 			if (renewalDate.isSame(reminderDate, "day")) {
 				await processRenewal(context, `${daysBefore} days before reminder`, subscriptionAfterSleep);
+				return; // Stop further reminders if renewal is processed
 			}
 
 			// Otherwise, check if the current date is the same as the reminder date, then trigger the reminder
@@ -188,7 +189,7 @@ const processRenewal = async (context, label, subscription) => {
 		const subscriptionForRenewal = await Subscription.findById(subscription._id).populate("user", "name email");
 
 		subscriptionForRenewal.status = "active";
-		subscriptionForRenewal.renewalDate = null
+		subscriptionForRenewal.workflowId = null
 		if (subscriptionForRenewal.frequency === "monthly") {
 			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
 		} else if (subscriptionForRenewal.frequency === "yearly") {
