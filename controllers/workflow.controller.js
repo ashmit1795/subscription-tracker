@@ -189,15 +189,17 @@ const processRenewal = async (context, label, subscription) => {
 		const subscriptionForRenewal = await Subscription.findById(subscription._id).populate("user", "name email");
 
 		subscriptionForRenewal.status = "active";
-		subscriptionForRenewal.workflowId = null
+		subscriptionForRenewal.workflowId = null;
+		const renewalDate = dayjs(subscriptionForRenewal.renewalDate);
+		
 		if (subscriptionForRenewal.frequency === "monthly") {
-			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "month").toDate();
+			subscriptionForRenewal.renewalDate = renewalDate.add(1, "month").toDate();
 		} else if (subscriptionForRenewal.frequency === "yearly") {
-			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "year").toDate();
+			subscriptionForRenewal.renewalDate = renewalDate.add(1, "year").toDate();
 		} else if (subscriptionForRenewal.frequency === "weekly") {
-			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "week").toDate();
+			subscriptionForRenewal.renewalDate = renewalDate.add(1, "week").toDate();
 		} else if (subscriptionForRenewal.frequency === "daily") {
-			subscriptionForRenewal.renewalDate = subscriptionForRenewal.renewalDate.add(1, "day").toDate();
+			subscriptionForRenewal.renewalDate = renewalDate.add(1, "day").toDate();
 		} else {
 			workflowDebug(`Unsupported frequency: ${subscriptionForRenewal.frequency}`);
 			throw new ApiError(400, `Unsupported frequency: ${subscriptionForRenewal.frequency}`);
