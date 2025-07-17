@@ -10,6 +10,9 @@ subscriptionsRouter.get("/", authorize, authorizeRoles("admin"), getAllSubscript
 // Get current user's subscriptions
 subscriptionsRouter.get("/current-user", authorize, getCurrentUserSubscriptions);
 
+// Get upcoming renewals
+subscriptionsRouter.get("/upcoming-renewals", authorize, getUpcomingRenewals);
+
 // Get subscription details by ID
 subscriptionsRouter.get("/:id", authorize, getSubscriptionById);
 
@@ -25,8 +28,6 @@ subscriptionsRouter.delete("/delete/:id", authorize, authorizeRoles("admin"), de
 // ! Get all subscriptions for a specific user, admin-only route
 subscriptionsRouter.get("/user/:id", authorize, authorizeRoles("admin"), getSpecificUserSubscription);
 
-// Get upcoming renewals
-subscriptionsRouter.get("/upcoming-renewals", authorize, getUpcomingRenewals);
 
 // Cancel a subscription
 subscriptionsRouter.delete("/cancel/:id", authorize, cancelSubscription);
