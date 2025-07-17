@@ -13,6 +13,7 @@ const sendReminderEmail = async ({ to, type, subscription }) => {
     if (!template) throw new ApiError(404, "Invalid email type");
 
     const mailInfo = {
+        subscriptionId: subscription._id,
 		userName: subscription.user.name,
 		subscriptionName: subscription.name,
 		renewalDate: dayjs(subscription.renewalDate).format("MMM D, YYYY"),

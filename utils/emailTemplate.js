@@ -5,9 +5,9 @@ export const generateEmailTemplate = ({
 	planName,
 	price,
 	paymentMethod,
-	developerDocsLink,
 	supportLink,
 	daysLeft,
+	subscriptionId,
 }) => `
 <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #f5f5f5; max-width: 600px; margin: 0 auto; background-color: #0f172a; padding: 0;">
     <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color: #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 0 15px rgba(0,0,0,0.3);">
@@ -40,7 +40,7 @@ export const generateEmailTemplate = ({
                     </tr>
                 </table>
         
-                <p style="font-size: 15px; margin-bottom: 20px; color: #cbd5e1;">Need to modify or cancel this subscription? Use your API keys and endpoint, or visit <a href="${developerDocsLink}" style="color: #60a5fa; text-decoration: underline;">API Documentation</a> before the renewal date.</p>
+                <p style="font-size: 15px; margin-bottom: 20px; color: #cbd5e1;">Need to modify or cancel this subscription? Use endpoint, or visit <a href="https://documenter.getpostman.com/view/32382436/2sB34ikes3" style="color: #60a5fa; text-decoration: underline;">API Documentation</a> before the renewal date.</p>
         
                 <p style="font-size: 15px; margin-top: 30px; color: #cbd5e1;">
                     Need help? 
@@ -57,7 +57,7 @@ export const generateEmailTemplate = ({
             <td style="background-color: #0f172a; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
                 <p style="margin: 0;">Ashmit Inc. | Balangir, Odisha, India </p>
                 <p style="margin: 8px 0 0;">
-                    <a href="#" style="color: #60a5fa; text-decoration: underline; margin: 0 8px;">Unsubscribe</a> | 
+                    <a href="https://subscription-tracker-sgrx.onrender.com/api/v1/subscriptions/unsubscribe/${subscriptionId}" style="color: #60a5fa; text-decoration: underline; margin: 0 8px;">Unsubscribe</a> | 
                     <a href="#" style="color: #60a5fa; text-decoration: underline; margin: 0 8px;">Privacy Policy</a> | 
                     <a href="#" style="color: #60a5fa; text-decoration: underline; margin: 0 8px;">Terms of Service</a>
                 </p>
