@@ -66,6 +66,7 @@ const sendReminders = serve(async (context) => {
 	}
 });
 
+// ! Get the status of a workflow run - admin only
 const getWorkflowStatus = async (req, res, next) => {
 	try {
 		const workflowRunId = req.params.workflowRunId;
@@ -103,6 +104,7 @@ const getWorkflowStatus = async (req, res, next) => {
 	}
 };
 
+// ! Cancel a specific workflow run - admin only
 const cancelWorkflow = async (req, res, next) => {
 	try {
 		const workflowRunId = req.params.workflowRunId;
@@ -118,6 +120,7 @@ const cancelWorkflow = async (req, res, next) => {
 	}
 };
 
+// ! Cancel all workflows - admin only
 const cancelAllWorkflows = async (req, res, next) => {
 	try {
 		const result = await qstash.cancel({ all: true });
@@ -127,6 +130,7 @@ const cancelAllWorkflows = async (req, res, next) => {
 	}
 };
 
+// ! List all running workflows - admin only
 const listRunningWorkflows = async (req, res, next) => {
 	try {
 		const allRuns = [];
