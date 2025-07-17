@@ -267,6 +267,7 @@ const deleteSubscription = async (req, res, next) => {
 // Update a subscription
 const updateSubscription = async (req, res, next) => { 
     const subscriptionId = req.params.id;
+    const userId = req.user._id; // Assuming the user ID is in req.user
     const {
 		name,
 		price,
@@ -282,6 +283,12 @@ const updateSubscription = async (req, res, next) => {
         if (!subscription) {
             subscriptionDebug("Subscription not found", { subscriptionId });
             throw new ApiError(404, "Subscription not found");
+        }
+
+        // Check if the subscription belongs to the user or if the user is an admin
+        if (!subscription.user.equals(userId) && req.user.role !== "admin") {
+            subscriptionDebug("Unauthorized access to subscription", { subscriptionId, userId });
+            throw new ApiError(403, "You do not have permission to access this subscription");
         }
 
         // Only active subscriptions can be updated
