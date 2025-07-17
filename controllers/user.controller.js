@@ -66,4 +66,26 @@ const updateUser = async (req, res, next) => {
     }
 }
 
-export {getUsers, getUserById, updateUser};
+const deleteUser = async (req, res, next) => { 
+    try {
+        const userId = req.params.id;
+
+        // Validate userId
+        if (!userId) {
+            throw new ApiError(400, "User ID is required");
+        }
+
+        const deletedUser = await User.findByIdAndDelete(userId);
+        if (!deletedUser) {
+            throw new ApiError(404, "User not found");
+        }
+
+        // If user is deleted successfully, return a success message
+        return res.status(200).json(new ApiResponse(null, "User deleted successfully", 200));
+    } catch (error) {
+        userDebug("Error deleting user: %O", error);
+        next(error); // Pass the error to the error middleware
+    }
+}
+
+export {getUsers, getUserById, updateUser, deleteUser};

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authorize, authorizeRoles } from "../middlewares/authorize.middleware.js";
-import { getUserById, getUsers, updateUser } from "../controllers/user.controller.js";
+import { deleteUser, getUserById, getUsers, updateUser } from "../controllers/user.controller.js";
 
 const userRouter = Router();
 
@@ -13,7 +13,7 @@ userRouter.get("/:id", authorize, authorizeRoles("admin"), getUserById);
 // Update user details
 userRouter.put("/update", authorize, updateUser);
 
-// Delete a user
-userRouter.delete("/:id", authorize,  (req, res) => res.send({ title: "DELETE user" }));
+// ! Delete a user by ID - admin only
+userRouter.delete("/:id", authorize, authorizeRoles("admin"), deleteUser);
 
 export default userRouter;
