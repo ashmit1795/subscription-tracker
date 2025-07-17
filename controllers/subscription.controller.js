@@ -118,12 +118,19 @@ const getSpecificUserSubscription = async (req, res, next) => {
 // Cancel a subscription
 const cancelSubscription = async (req, res, next) => { 
     const subscriptionId = req.params.id;
+    const userId = req.user._id; // Assuming the user ID is in req.user
 
     try {
         const subscription = await Subscription.findById(subscriptionId);
         if (!subscription) {
             subscriptionDebug("Subscription not found", { subscriptionId });
             throw new ApiError(404, "Subscription not found");
+        }
+
+        // Check if the subscription belongs to the user or if the user is an admin
+        if (!subscription.user.equals(userId) && req.user.role !== "admin") {
+            subscriptionDebug("Unauthorized access to subscription", { subscriptionId, userId });
+            throw new ApiError(403, "You do not have permission to access this subscription");
         }
 
         subscription.status = "cancelled"; // Update the subscription status to canceled
@@ -144,13 +151,20 @@ const cancelSubscription = async (req, res, next) => {
 
 // Unsubscribe from a subscription
 const unsubscribe = async (req, res, next) => {
-	const subscriptionId = req.params.id;
+    const subscriptionId = req.params.id;
+    const userId = req.user._id; // Assuming the user ID is in req.user
 
 	try {
 		const subscription = await Subscription.findById(subscriptionId);
 		if (!subscription) {
 			throw new ApiError(404, "Subscription not found");
-		}
+        }
+        
+        // Check if the subscription belongs to the user or if the user is an admin
+        if (!subscription.user.equals(userId) && req.user.role !== "admin") {
+            subscriptionDebug("Unauthorized access to subscription", { subscriptionId, userId });
+            throw new ApiError(403, "You do not have permission to access this subscription");
+        }
 
 		subscription.status = "inactive"; // Or "unsubscribed"
 		subscription.renewalDate = null; // Immediate stop → no further renewals
@@ -180,6 +194,7 @@ const unsubscribe = async (req, res, next) => {
 const resumeSubscription = async (req, res, next) => {
     const subscriptionId = req.params.id;
     const startDate = req.body.startDate; // Expecting startDate in the request body
+    const userId = req.user._id; // Assuming the user ID is in req.user
 
     try {
 		if (!startDate) {
@@ -196,7 +211,13 @@ const resumeSubscription = async (req, res, next) => {
 		if (!subscription) {
 			subscriptionDebug("Subscription not found", { subscriptionId });
 			throw new ApiError(404, "Subscription not found");
-		}
+        }
+        
+        // Check if the subscription belongs to the user or if the user is an admin
+        if (!subscription.user.equals(userId) && req.user.role !== "admin") {
+            subscriptionDebug("Unauthorized access to subscription", { subscriptionId, userId });
+            throw new ApiError(403, "You do not have permission to access this subscription");
+        }
 
 		if (subscription.status !== "cancelled") {
 			subscriptionDebug("Subscription is not cancelled", {subscriptionId});
